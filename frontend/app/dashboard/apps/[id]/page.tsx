@@ -30,6 +30,17 @@ export default function AppDetail({ params }: AppDetailsProps) {
       setError(null);
       try {
         const { app: appData, deployments: deploymentsData, environment: envData } = await appsApi.getApp(params.id);
+        console.log('アプリデータを取得しました:', appData);
+        console.log('初期デプロイメントデータ:', JSON.stringify(deploymentsData));
+        
+        if (deploymentsData && deploymentsData.length > 0) {
+          console.log('最新のデプロイ:', {
+            commitHash: deploymentsData[0].commitHash,
+            commitMessage: deploymentsData[0].commitMessage,
+            duration: deploymentsData[0].duration
+          });
+        }
+        
         setApp(appData);
         setDeployments(deploymentsData);
         setEnvironment(envData);
@@ -44,6 +55,10 @@ export default function AppDetail({ params }: AppDetailsProps) {
             setLogs('ログの取得に失敗しました。');
           }
         }
+        
+        // デプロイ履歴も取得して最新のコミット情報が見れるようにする
+        await fetchDeployHistory();
+        
       } catch (err: any) {
         setError(err.response?.data?.message || 'アプリ情報の取得に失敗しました。');
       } finally {
@@ -153,6 +168,25 @@ export default function AppDetail({ params }: AppDetailsProps) {
   // アプリが一度もデプロイされていない場合のバナー表示
   const showDeployBanner = !app.lastDeployedAt || error?.includes('デプロイ') || error?.includes('deploy');
 
+  const fetchDeployHistory = async () => {
+    try {
+      const deploysData = await deploysApi.getDeployHistory(params.id);
+      console.log('デプロイ履歴を取得しました:', deploysData);
+      if (deploysData && deploysData.length > 0) {
+        const deploy = deploysData[0];
+        console.log('最新のデプロイデータ(完全なオブジェクト):', JSON.stringify(deploy, null, 2));
+        console.log('コミット情報:', {
+          commitHash: deploy.commitHash,
+          commitMessage: deploy.commitMessage,
+          duration: deploy.duration
+        });
+      }
+      setDeployments(deploysData);
+    } catch (error) {
+      console.error('デプロイ履歴の取得に失敗しました:', error);
+    }
+  };
+
   return (
     <div>
       {showDeployBanner && (
@@ -242,7 +276,16 @@ export default function AppDetail({ params }: AppDetailsProps) {
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">最終デプロイ</p>
               <p className="text-sm font-medium text-gray-900 dark:text-white">
-                {app.lastDeployedAt ? new Date(app.lastDeployedAt).toLocaleString() : '未デプロイ'}
+                {app.lastDeployedAt ? 
+                  (() => {
+                    try {
+                      return new Date(app.lastDeployedAt).toLocaleString();
+                    } catch (e) {
+                      console.error("Invalid date format:", app.lastDeployedAt);
+                      return '未デプロイ';
+                    }
+                  })() 
+                : '未デプロイ'}
               </p>
             </div>
             <div>
@@ -333,7 +376,16 @@ export default function AppDetail({ params }: AppDetailsProps) {
                       {deploy.commitMessage || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {new Date(deploy.createdAt).toLocaleString()}
+                      {deploy.createdAt ? 
+                        (() => {
+                          try {
+                            return new Date(deploy.createdAt).toLocaleString();
+                          } catch (e) {
+                            console.error("Invalid date format:", deploy.createdAt);
+                            return '-';
+                          }
+                        })() 
+                      : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                       {deploy.duration || '-'}

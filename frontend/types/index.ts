@@ -21,6 +21,7 @@ export interface App {
   domainType: 'auto' | 'custom';
   customDomain: string | null;
   containerId?: string;
+  container_id?: string;
   userId: string;
   buildMethod: 'auto' | 'dockerfile' | 'nextjs';
   autoDeploy: boolean;
@@ -56,8 +57,10 @@ export interface Domain {
 
 // 環境変数の型定義
 export interface EnvVar {
+  id?: string;
   key: string;
   value: string;
+  appId?: string;
 }
 
 // 認証関連のレスポンス型

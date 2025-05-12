@@ -464,6 +464,53 @@ export const toggleAppStatus = async (req: AuthenticatedRequest, res: Response):
   }
 };
 
+// コンテナログの取得
+export const getContainerLogs = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { id } = req.params;
+  
+  try {
+    if (!req.user || !req.user.id) {
+      throw new AppError('Unauthorized', 401);
+    }
+    
+    // アプリが存在するか確認
+    const { data: existingApp, error: fetchError } = await supabase
+      .from('nextdock_apps')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError) throw fetchError;
+    
+    if (!existingApp) {
+      throw new AppError('App not found', 404);
+    }
+    
+    // 権限チェック
+    if (existingApp.user_id !== req.user.id) {
+      throw new AppError('You do not have permission to access this app logs', 403);
+    }
+    
+    // コンテナが存在しない場合
+    if (!existingApp.container_id) {
+      throw new AppError('No container found for this app', 400);
+    }
+    
+    // コンテナログを取得
+    const logs = await dockerService.getContainerLogs(existingApp.container_id);
+    
+    res.status(200).json({
+      logs,
+    });
+  } catch (error: any) {
+    console.error('Error fetching container logs:', error);
+    res.status(error.statusCode || 500).json({
+      error: error.name || 'Internal Server Error',
+      message: error.message || 'Failed to fetch container logs',
+    });
+  }
+};
+
 export default {
   getApps,
   getApp,
@@ -471,4 +518,5 @@ export default {
   updateApp,
   deleteApp,
   toggleAppStatus,
+  getContainerLogs,
 };

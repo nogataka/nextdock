@@ -92,12 +92,123 @@ export const appsApi = {
   // アプリ一覧取得
   getApps: async (): Promise<App[]> => {
     const response = await apiClient.get<{ apps: App[] }>('/api/apps');
+    
+    // スネークケースからキャメルケースへの変換処理を追加
+    if (response.data.apps && response.data.apps.length > 0) {
+      response.data.apps.forEach(app => {
+        const appData = app as any;
+        
+        // container_idがあればcontainerIdにコピー
+        if (appData.container_id && !appData.containerId) {
+          appData.containerId = appData.container_id;
+        }
+        
+        // 日付フィールドの変換
+        if (appData.last_deployed_at && !appData.lastDeployedAt) {
+          appData.lastDeployedAt = appData.last_deployed_at;
+        }
+        
+        // created_atをcreatedAtに変換
+        if (appData.created_at && !appData.createdAt) {
+          appData.createdAt = appData.created_at;
+        }
+        
+        // updated_atをupdatedAtに変換
+        if (appData.updated_at && !appData.updatedAt) {
+          appData.updatedAt = appData.updated_at;
+        }
+      });
+    }
+    
     return response.data.apps;
   },
 
   // アプリ詳細取得
   getApp: async (id: string): Promise<{ app: App; deployments: Deploy[]; environment: EnvVar[] }> => {
     const response = await apiClient.get<{ app: App; deployments: Deploy[]; environment: EnvVar[] }>(`/api/apps/${id}`);
+    
+    // バックエンドのプロパティ名をフロントエンドの形式に変換
+    if (response.data.app) {
+      const appData = response.data.app as any;
+      
+      // container_idがあればcontainerIdにコピー
+      if (appData.container_id && !appData.containerId) {
+        appData.containerId = appData.container_id;
+        console.log('バックエンドのcontainer_idをcontainerIdに変換しました:', appData.container_id);
+      }
+      
+      // 日付フィールドの変換
+      if (appData.last_deployed_at && !appData.lastDeployedAt) {
+        appData.lastDeployedAt = appData.last_deployed_at;
+        console.log('バックエンドのlast_deployed_atをlastDeployedAtに変換しました:', appData.last_deployed_at);
+      }
+      
+      // created_atをcreatedAtに変換
+      if (appData.created_at && !appData.createdAt) {
+        appData.createdAt = appData.created_at;
+      }
+      
+      // updated_atをupdatedAtに変換
+      if (appData.updated_at && !appData.updatedAt) {
+        appData.updatedAt = appData.updated_at;
+      }
+    }
+    
+    // デプロイメントデータの日付フィールド変換
+    if (response.data.deployments && response.data.deployments.length > 0) {
+      response.data.deployments.forEach(deploy => {
+        const deployData = deploy as any;
+        
+        // デバッグ用ロギング
+        console.log('getApp内のデプロイデータ:', JSON.stringify(deployData));
+        
+        // completed_atをcompletedAtに変換
+        if (deployData.completed_at && !deployData.completedAt) {
+          deployData.completedAt = deployData.completed_at;
+        }
+        
+        // created_atをcreatedAtに変換
+        if (deployData.created_at && !deployData.createdAt) {
+          deployData.createdAt = deployData.created_at;
+        }
+        
+        // コミット情報の変換
+        if (deployData.commit_hash && !deployData.commitHash) {
+          deployData.commitHash = deployData.commit_hash;
+          console.log(`getApp内でコミットハッシュを変換: ${deployData.commit_hash} -> ${deployData.commitHash}`);
+        }
+        
+        if (deployData.commit_message && !deployData.commitMessage) {
+          deployData.commitMessage = deployData.commit_message;
+          console.log(`getApp内でコミットメッセージを変換: ${deployData.commit_message} -> ${deployData.commitMessage}`);
+        }
+        
+        // 所要時間を計算（completedAtとcreatedAtがある場合）
+        if (deployData.completedAt && deployData.createdAt && !deployData.duration) {
+          try {
+            const start = new Date(deployData.createdAt).getTime();
+            const end = new Date(deployData.completedAt).getTime();
+            const durationMs = end - start;
+            
+            // 読みやすい形式に変換（例：「2分30秒」）
+            if (durationMs > 0) {
+              const seconds = Math.floor(durationMs / 1000);
+              if (seconds < 60) {
+                deployData.duration = `${seconds}秒`;
+              } else {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                deployData.duration = `${minutes}分${remainingSeconds > 0 ? ' ' + remainingSeconds + '秒' : ''}`;
+              }
+              console.log(`getApp内で所要時間を計算: ${deployData.duration}`);
+            }
+          } catch (e) {
+            console.error('所要時間の計算に失敗しました:', e);
+          }
+        }
+      });
+    }
+    
     return response.data;
   },
 
@@ -124,6 +235,8 @@ export const appsApi = {
       buildMethod?: 'auto' | 'dockerfile' | 'nextjs';
       domainType?: 'auto' | 'custom';
       customDomain?: string;
+      autoDeploy?: boolean;
+      repository?: string;
       envVars?: EnvVar[];
     }
   ): Promise<{ message: string; app: App }> => {
@@ -149,6 +262,12 @@ export const appsApi = {
     const response = await apiClient.post<{ message: string; app: App }>(`/api/apps/${id}/status`, { action });
     return response.data;
   },
+  
+  // コンテナログの取得
+  getContainerLogs: async (id: string): Promise<{ logs: string }> => {
+    const response = await apiClient.get<{ logs: string }>(`/api/apps/${id}/logs`);
+    return response.data;
+  },
 };
 
 // デプロイ関連のAPI
@@ -156,12 +275,134 @@ export const deploysApi = {
   // デプロイ履歴取得
   getDeployHistory: async (appId: string): Promise<Deploy[]> => {
     const response = await apiClient.get<{ deploys: Deploy[] }>(`/api/deploys/app/${appId}`);
+    
+    // スネークケースからキャメルケースへの変換
+    if (response.data.deploys && response.data.deploys.length > 0) {
+      response.data.deploys.forEach(deploy => {
+        const deployData = deploy as any;
+        
+        // デバッグ用ロギング
+        console.log('処理前のデプロイデータ:', JSON.stringify(deployData));
+        
+        // 日付フィールドの変換
+        if (deployData.completed_at && !deployData.completedAt) {
+          deployData.completedAt = deployData.completed_at;
+        }
+        
+        if (deployData.created_at && !deployData.createdAt) {
+          deployData.createdAt = deployData.created_at;
+        }
+        
+        // コミット情報の変換
+        if (deployData.commit_hash && !deployData.commitHash) {
+          deployData.commitHash = deployData.commit_hash;
+          console.log(`コミットハッシュを変換: ${deployData.commit_hash} -> ${deployData.commitHash}`);
+        }
+        
+        if (deployData.commit_message && !deployData.commitMessage) {
+          deployData.commitMessage = deployData.commit_message;
+          console.log(`コミットメッセージを変換: ${deployData.commit_message} -> ${deployData.commitMessage}`);
+        }
+        
+        // 所要時間を計算（completedAtとcreatedAtがある場合）
+        if (deployData.completedAt && deployData.createdAt && !deployData.duration) {
+          try {
+            const start = new Date(deployData.createdAt).getTime();
+            const end = new Date(deployData.completedAt).getTime();
+            const durationMs = end - start;
+            
+            // 読みやすい形式に変換（例：「2分30秒」）
+            if (durationMs > 0) {
+              const seconds = Math.floor(durationMs / 1000);
+              if (seconds < 60) {
+                deployData.duration = `${seconds}秒`;
+              } else {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                deployData.duration = `${minutes}分${remainingSeconds > 0 ? ' ' + remainingSeconds + '秒' : ''}`;
+              }
+              console.log(`所要時間を計算: ${deployData.duration}`);
+            }
+          } catch (e) {
+            console.error('所要時間の計算に失敗しました:', e);
+          }
+        }
+        
+        // デバッグ用ロギング
+        console.log('処理後のデプロイデータ:', JSON.stringify({
+          commitHash: deployData.commitHash,
+          commitMessage: deployData.commitMessage,
+          duration: deployData.duration
+        }));
+      });
+    }
+    
     return response.data.deploys;
   },
 
   // デプロイ詳細取得
   getDeployDetails: async (appId: string, deployId: string): Promise<Deploy> => {
     const response = await apiClient.get<{ deploy: Deploy }>(`/api/deploys/app/${appId}/deploy/${deployId}`);
+    
+    // スネークケースからキャメルケースへの変換
+    if (response.data.deploy) {
+      const deployData = response.data.deploy as any;
+      
+      // デバッグ用ロギング
+      console.log('詳細：処理前のデプロイデータ:', JSON.stringify(deployData));
+      
+      // 日付フィールドの変換
+      if (deployData.completed_at && !deployData.completedAt) {
+        deployData.completedAt = deployData.completed_at;
+      }
+      
+      if (deployData.created_at && !deployData.createdAt) {
+        deployData.createdAt = deployData.created_at;
+      }
+      
+      // コミット情報の変換
+      if (deployData.commit_hash && !deployData.commitHash) {
+        deployData.commitHash = deployData.commit_hash;
+        console.log(`詳細：コミットハッシュを変換: ${deployData.commit_hash} -> ${deployData.commitHash}`);
+      }
+      
+      if (deployData.commit_message && !deployData.commitMessage) {
+        deployData.commitMessage = deployData.commit_message;
+        console.log(`詳細：コミットメッセージを変換: ${deployData.commit_message} -> ${deployData.commitMessage}`);
+      }
+      
+      // 所要時間を計算（completedAtとcreatedAtがある場合）
+      if (deployData.completedAt && deployData.createdAt && !deployData.duration) {
+        try {
+          const start = new Date(deployData.createdAt).getTime();
+          const end = new Date(deployData.completedAt).getTime();
+          const durationMs = end - start;
+          
+          // 読みやすい形式に変換（例：「2分30秒」）
+          if (durationMs > 0) {
+            const seconds = Math.floor(durationMs / 1000);
+            if (seconds < 60) {
+              deployData.duration = `${seconds}秒`;
+            } else {
+              const minutes = Math.floor(seconds / 60);
+              const remainingSeconds = seconds % 60;
+              deployData.duration = `${minutes}分${remainingSeconds > 0 ? ' ' + remainingSeconds + '秒' : ''}`;
+            }
+            console.log(`詳細：所要時間を計算: ${deployData.duration}`);
+          }
+        } catch (e) {
+          console.error('所要時間の計算に失敗しました:', e);
+        }
+      }
+      
+      // デバッグ用ロギング
+      console.log('詳細：処理後のデプロイデータ:', JSON.stringify({
+        commitHash: deployData.commitHash,
+        commitMessage: deployData.commitMessage,
+        duration: deployData.duration
+      }));
+    }
+    
     return response.data.deploy;
   },
 
@@ -347,12 +588,68 @@ function getMockBranches(): GithubBranch[] {
   ];
 }
 
+// Environment variables API
+export const environmentApi = {
+  // Get environment variables for an app
+  getEnvironmentVariables: async (appId: string): Promise<EnvVar[]> => {
+    const response = await apiClient.get<{ environment: EnvVar[] }>(`/api/apps/${appId}/environment`);
+    
+    // スネークケースからキャメルケースへの変換
+    if (response.data.environment && response.data.environment.length > 0) {
+      response.data.environment.forEach(env => {
+        const envData = env as any;
+        
+        // created_atをcreatedAtに変換
+        if (envData.created_at && !envData.createdAt) {
+          envData.createdAt = envData.created_at;
+        }
+        
+        // app_idをappIdに変換
+        if (envData.app_id && !envData.appId) {
+          envData.appId = envData.app_id;
+        }
+      });
+    }
+    
+    return response.data.environment;
+  },
+
+  // Add environment variable
+  addEnvironmentVariable: async (appId: string, envVar: { key: string; value: string }): Promise<EnvVar> => {
+    const response = await apiClient.post<{ environment: EnvVar }>(`/api/apps/${appId}/environment`, envVar);
+    
+    // レスポンスデータの変換
+    if (response.data.environment) {
+      const envData = response.data.environment as any;
+      
+      // created_atをcreatedAtに変換
+      if (envData.created_at && !envData.createdAt) {
+        envData.createdAt = envData.created_at;
+      }
+      
+      // app_idをappIdに変換
+      if (envData.app_id && !envData.appId) {
+        envData.appId = envData.app_id;
+      }
+    }
+    
+    return response.data.environment;
+  },
+
+  // Delete environment variable
+  deleteEnvironmentVariable: async (appId: string, envVarId: string): Promise<{ message: string }> => {
+    const response = await apiClient.delete<{ message: string }>(`/api/apps/${appId}/environment/${envVarId}`);
+    return response.data;
+  },
+};
+
 const api = {
   auth: authApi,
   apps: appsApi,
   deploys: deploysApi,
   domains: domainsApi,
   github: githubApi,
+  environment: environmentApi,
 };
 
 export default api;

@@ -15,12 +15,17 @@ export default function AppsPage() {
 
   useEffect(() => {
     const fetchApps = async () => {
+      setLoading(true);
       try {
         const appsData = await appsApi.getApps();
+        console.log('アプリ一覧を取得しました:', appsData);
+        if (appsData && appsData.length > 0) {
+          console.log('最初のアプリのlastDeployedAt:', appsData[0].lastDeployedAt);
+        }
         setApps(appsData);
-      } catch (err: any) {
-        console.error('Failed to fetch apps:', err);
-        setError('アプリの取得に失敗しました。');
+      } catch (error) {
+        console.error('アプリ一覧の取得に失敗しました:', error);
+        setError('アプリ一覧の取得に失敗しました。');
       } finally {
         setLoading(false);
       }
@@ -137,7 +142,16 @@ export default function AppsPage() {
                 </div>
                 <div className="mt-2 flex items-center text-sm text-gray-500 dark:text-gray-400">
                   <FiClock className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
-                  <p>最終更新: {app.lastDeployedAt ? new Date(app.lastDeployedAt).toLocaleDateString('ja-JP') : '未デプロイ'}</p>
+                  <p>最終更新: {app.lastDeployedAt ? 
+                    (() => {
+                      try {
+                        return new Date(app.lastDeployedAt).toLocaleDateString('ja-JP');
+                      } catch (e) {
+                        console.error("Invalid date format:", app.lastDeployedAt);
+                        return '未デプロイ';
+                      }
+                    })() 
+                  : '未デプロイ'}</p>
                 </div>
               </div>
               <div className="bg-gray-50 dark:bg-gray-700 px-4 py-4 sm:px-6">

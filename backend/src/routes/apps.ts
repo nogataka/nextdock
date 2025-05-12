@@ -25,4 +25,7 @@ router.delete('/:id', appsController.deleteApp);
 // アプリの停止/起動
 router.post('/:id/status', appsController.toggleAppStatus);
 
+// コンテナログの取得
+router.get('/:id/logs', appsController.getContainerLogs);
+
 export default router;
