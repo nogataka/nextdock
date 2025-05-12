@@ -19,4 +19,7 @@ router.post('/app/:appId', deploysController.triggerDeploy);
 // デプロイのログを取得
 router.get('/app/:appId/deploy/:deployId/logs', deploysController.getDeployLogs);
 
+// リポジトリURLから直接デプロイ（新規アプリ作成）
+router.post('/repository', deploysController.deployFromRepository);
+
 export default router;

@@ -240,6 +240,34 @@ export const runContainer = async (
     // 環境変数を整形
     const env = envVars.map(e => `${e.key}=${e.value}`);
     
+    // 必要なNginx Proxy環境変数が設定されているか確認
+    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.c1x.biz';
+    const appDomain = `${subdomain}.${baseDomain}`;
+    
+    const requiredEnvKeys = ['VIRTUAL_HOST', 'VIRTUAL_PORT', 'LETSENCRYPT_HOST', 'LETSENCRYPT_EMAIL'];
+    const missingEnvKeys = requiredEnvKeys.filter(key => !envVars.some(env => env.key === key));
+    
+    // 不足している環境変数を追加
+    if (missingEnvKeys.length > 0) {
+      console.log(`Adding missing Nginx Proxy environment variables: ${missingEnvKeys.join(', ')}`);
+      
+      if (!envVars.some(env => env.key === 'VIRTUAL_HOST')) {
+        env.push(`VIRTUAL_HOST=${appDomain}`);
+      }
+      
+      if (!envVars.some(env => env.key === 'VIRTUAL_PORT')) {
+        env.push(`VIRTUAL_PORT=80`);
+      }
+      
+      if (!envVars.some(env => env.key === 'LETSENCRYPT_HOST')) {
+        env.push(`LETSENCRYPT_HOST=${appDomain}`);
+      }
+      
+      if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
+        env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@nextdock.c1x.biz'}`);
+      }
+    }
+    
     // Dockerfileでの設定を確認するためのログ
     console.log(`Starting container from image: ${imageTag}`);
     console.log(`Container will be named: ${containerName}`);
@@ -286,9 +314,7 @@ export const runContainer = async (
     }
     
     console.log(`Container started successfully. Port mapping: Host ${port} -> Container 80`);
-    
-    // NGINXの設定を更新（実際の実装では必要）
-    // ここでは簡略化のため省略
+    console.log(`App will be available at: https://${appDomain}`);
     
     return container.id;
   } catch (error) {
@@ -395,6 +421,102 @@ export const getContainerLogs = async (
   }
 };
 
+// Gitがインストールされているか確認
+export const checkGitInstalled = async (): Promise<boolean> => {
+  try {
+    // シェルコマンドでgitのバージョンを確認
+    const { stdout } = await execPromise('git --version');
+    console.log(`Git installed: ${stdout.trim()}`);
+    return true;
+  } catch (error) {
+    console.error('Git is not installed:', error);
+    return false;
+  }
+};
+
+// Gitをインストール（Alpineベースのイメージ用）
+export const installGitAlpine = async (dockerfilePath: string): Promise<void> => {
+  try {
+    // Dockerfileを読み込む
+    let dockerfileContent = await fs.readFile(dockerfilePath, 'utf8');
+    
+    // すでにgitのインストールが含まれているか確認
+    if (dockerfileContent.includes('apk add --no-cache git')) {
+      console.log('Git installation already included in Dockerfile');
+      return;
+    }
+    
+    // gitインストールコマンドを追加
+    dockerfileContent = dockerfileContent.replace(
+      /FROM\s+.*?(?:alpine|Alpine).*?\n/,
+      '$&RUN apk add --no-cache git\n'
+    );
+    
+    // 修正したDockerfileを保存
+    await fs.writeFile(dockerfilePath, dockerfileContent);
+    console.log('Added git installation to Alpine-based Dockerfile');
+  } catch (error) {
+    console.error('Failed to modify Dockerfile for git installation:', error);
+    throw error;
+  }
+};
+
+// Gitをインストール（Debian/Ubuntuベースのイメージ用）
+export const installGitDebian = async (dockerfilePath: string): Promise<void> => {
+  try {
+    // Dockerfileを読み込む
+    let dockerfileContent = await fs.readFile(dockerfilePath, 'utf8');
+    
+    // すでにgitのインストールが含まれているか確認
+    if (dockerfileContent.includes('apt-get') && dockerfileContent.includes('git')) {
+      console.log('Git installation already included in Dockerfile');
+      return;
+    }
+    
+    // gitインストールコマンドを追加
+    if (dockerfileContent.includes('apt-get update')) {
+      // apt-get updateが既にある場合は、そのコマンドにgitを追加
+      dockerfileContent = dockerfileContent.replace(
+        /RUN\s+apt-get\s+update.*?(?:install|-y)/,
+        '$& git'
+      );
+    } else {
+      // apt-get updateがない場合は、新しいRUNコマンドを追加
+      dockerfileContent = dockerfileContent.replace(
+        /FROM\s+.*?\n/,
+        '$&RUN apt-get update && apt-get install -y git\n'
+      );
+    }
+    
+    // 修正したDockerfileを保存
+    await fs.writeFile(dockerfilePath, dockerfileContent);
+    console.log('Added git installation to Debian/Ubuntu-based Dockerfile');
+  } catch (error) {
+    console.error('Failed to modify Dockerfile for git installation:', error);
+    throw error;
+  }
+};
+
+// Dockerfileにgitインストールを追加
+export const ensureGitInstalled = async (repoPath: string): Promise<void> => {
+  const dockerfilePath = path.join(repoPath, 'Dockerfile');
+  
+  try {
+    // Dockerfileの内容を読み込む
+    const dockerfileContent = await fs.readFile(dockerfilePath, 'utf8');
+    
+    // ベースイメージを確認
+    if (dockerfileContent.toLowerCase().includes('alpine')) {
+      await installGitAlpine(dockerfilePath);
+    } else {
+      await installGitDebian(dockerfilePath);
+    }
+  } catch (error) {
+    console.error('Error ensuring git is installed:', error);
+    throw error;
+  }
+};
+
 export default {
   checkDockerfile,
   generateNextjsDockerfile,
@@ -405,4 +527,6 @@ export default {
   restartContainer,
   stopAndRemoveContainer,
   getContainerLogs,
+  checkGitInstalled,
+  ensureGitInstalled,
 };

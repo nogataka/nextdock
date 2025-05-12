@@ -1,2 +1,15 @@
+/node_modules
+
 deploy_back_front.js
 
+package-lock.json
+package.json
+
+deploy_*/
+
+/frontend.env
+/backend.env
+
+/back
+
+.DS_Store
