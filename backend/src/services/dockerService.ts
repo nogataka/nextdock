@@ -273,6 +273,10 @@ export const runContainer = async (
     console.log(`Container will be named: ${containerName}`);
     console.log(`Environment variables count: ${env.length}`);
     
+    // nginx-proxyと同じネットワークを使用
+    const networkMode = process.env.DOCKER_NETWORK || 'repo_nextdock-network';
+    console.log(`Using network: ${networkMode}`);
+    
     // コンテナを作成
     const container = await docker.createContainer({
       Image: imageTag,
@@ -293,6 +297,8 @@ export const runContainer = async (
         RestartPolicy: {
           Name: 'always',
         },
+        // nginx-proxyと同じネットワークに接続
+        NetworkMode: networkMode,
       },
       // コンテナラベル（管理用）
       Labels: {
