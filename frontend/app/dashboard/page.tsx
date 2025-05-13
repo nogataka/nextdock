@@ -145,9 +145,13 @@ export default function Dashboard() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-blue-600 dark:text-blue-400">
-                          <a href={app.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                            {app.url}
-                          </a>
+                          {app.url ? (
+                            <a href={app.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                              {app.url}
+                            </a>
+                          ) : (
+                            <span className="text-gray-400">未設定</span>
+                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

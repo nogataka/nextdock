@@ -78,6 +78,17 @@ export default function AppDetail({ params }: AppDetailsProps) {
       const action = app.status === 'running' ? 'stop' : 'start';
       const { app: updatedApp } = await appsApi.toggleAppStatus(app.id, action);
       setApp(updatedApp);
+      
+      // アプリデータを再取得して最新情報を表示
+      const { app: refreshedApp, deployments: deploymentsData, environment: envData } = await appsApi.getApp(params.id);
+      setApp(refreshedApp);
+      setDeployments(deploymentsData);
+      setEnvironment(envData);
+      
+      // 操作成功メッセージ
+      const successMessage = action === 'stop' ? 'アプリを停止しました' : 'アプリを起動しました';
+      setError(successMessage);
+      setTimeout(() => setError(null), 3000);
     } catch (err: any) {
       const errorMessage = err.response?.data?.message || `アプリの${app.status === 'running' ? '停止' : '起動'}に失敗しました。`;
       setError(errorMessage);
@@ -102,10 +113,50 @@ export default function AppDetail({ params }: AppDetailsProps) {
     if (!app) return;
     
     setActionLoading(true);
+    setError(null);
     try {
       const response = await deploysApi.triggerDeploy(app.id);
-      // 最新のデプロイ情報を取得するためにページをリロード
-      window.location.reload();
+      setError('デプロイを開始しました。しばらくお待ちください...');
+      
+      // デプロイが開始されたらポーリングでステータスを確認
+      const checkDeployStatus = async () => {
+        try {
+          const deployHistory = await deploysApi.getDeployHistory(app.id);
+          const deploysList = deployHistory.deploys;
+          if (deploysList && deploysList.length > 0) {
+            const latestDeploy = deploysList[0];
+            
+            // デプロイログの取得
+            const logData = await deploysApi.getDeployLogs(app.id, latestDeploy.id);
+            setLogs(logData.logs);
+            
+            // デプロイが完了または失敗した場合
+            if (latestDeploy.status === 'success' || latestDeploy.status === 'failed') {
+              // アプリデータを再取得
+              const { app: refreshedApp, deployments: deploymentsData, environment: envData } = await appsApi.getApp(params.id);
+              setApp(refreshedApp);
+              setDeployments(deploymentsData);
+              
+              setError(latestDeploy.status === 'success' ? 
+                'デプロイが完了しました！' : 
+                'デプロイに失敗しました。ログを確認してください。');
+              
+              setTimeout(() => setError(null), 5000);
+              setActionLoading(false);
+              return;
+            }
+            
+            // まだ進行中の場合は再度チェック
+            setTimeout(checkDeployStatus, 3000);
+          }
+        } catch (error) {
+          console.error('デプロイステータス確認エラー:', error);
+          setActionLoading(false);
+        }
+      };
+      
+      // ポーリング開始
+      setTimeout(checkDeployStatus, 2000);
     } catch (err: any) {
       setError(err.response?.data?.message || 'デプロイの開始に失敗しました。');
       setActionLoading(false);
@@ -172,8 +223,8 @@ export default function AppDetail({ params }: AppDetailsProps) {
     try {
       const deploysData = await deploysApi.getDeployHistory(params.id);
       console.log('デプロイ履歴を取得しました:', deploysData);
-      if (deploysData && deploysData.length > 0) {
-        const deploy = deploysData[0];
+      if (deploysData.deploys && deploysData.deploys.length > 0) {
+        const deploy = deploysData.deploys[0];
         console.log('最新のデプロイデータ(完全なオブジェクト):', JSON.stringify(deploy, null, 2));
         console.log('コミット情報:', {
           commitHash: deploy.commitHash,
@@ -181,7 +232,7 @@ export default function AppDetail({ params }: AppDetailsProps) {
           duration: deploy.duration
         });
       }
-      setDeployments(deploysData);
+      setDeployments(deploysData.deploys);
     } catch (error) {
       console.error('デプロイ履歴の取得に失敗しました:', error);
     }
@@ -216,15 +267,26 @@ export default function AppDetail({ params }: AppDetailsProps) {
           </p>
         </div>
         <div className="mt-4 md:mt-0 flex flex-wrap gap-2">
-          <a
-            href={app.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary flex items-center"
-          >
-            <span>サイトを開く</span>
-            <FaExternalLinkAlt className="ml-2 h-4 w-4" />
-          </a>
+          {app.url ? (
+            <a
+              href={app.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary flex items-center"
+            >
+              <span>サイトを開く</span>
+              <FaExternalLinkAlt className="ml-2 h-4 w-4" />
+            </a>
+          ) : (
+            <button
+              className="btn-primary flex items-center opacity-50 cursor-not-allowed"
+              disabled
+              title="URLが設定されていません"
+            >
+              <span>サイトを開く</span>
+              <FaExternalLinkAlt className="ml-2 h-4 w-4" />
+            </button>
+          )}
           <div className="flex gap-2">
             <button 
               className="btn-secondary"
@@ -262,9 +324,13 @@ export default function AppDetail({ params }: AppDetailsProps) {
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">URL</p>
               <p className="text-sm font-medium text-blue-600 dark:text-blue-400">
-                <a href={app.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                  {app.url}
-                </a>
+                {app.url ? (
+                  <a href={app.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                    {app.url}
+                  </a>
+                ) : (
+                  <span className="text-gray-400">未設定</span>
+                )}
               </p>
             </div>
             <div>

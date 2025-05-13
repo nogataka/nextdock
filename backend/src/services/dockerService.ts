@@ -244,8 +244,20 @@ export const runContainer = async (
     const baseDomain = process.env.BASE_DOMAIN || 'nextdock.dev';
     const appDomain = `${subdomain}.${baseDomain}`;
     
-    const requiredEnvKeys = ['VIRTUAL_HOST', 'VIRTUAL_PORT', 'LETSENCRYPT_HOST', 'LETSENCRYPT_EMAIL'];
-    const missingEnvKeys = requiredEnvKeys.filter(key => !envVars.some(env => env.key === key));
+    // ワイルドカード証明書を使用するかどうかの設定を確認
+    const useWildcardCert = process.env.USE_WILDCARD_CERT === 'true';
+    
+    // ワイルドカード証明書を使用する場合は必須環境変数からLETSENCRYPT関連の変数を除外
+    const requiredEnvKeys = ['VIRTUAL_HOST', 'VIRTUAL_PORT'];
+    
+    // SSL証明書関連の環境変数（ワイルドカード証明書を使用しない場合のみ必要）
+    const sslEnvKeys = ['LETSENCRYPT_HOST', 'LETSENCRYPT_EMAIL'];
+    
+    // 使用する必須環境変数を決定
+    const allRequiredEnvKeys = useWildcardCert ? requiredEnvKeys : [...requiredEnvKeys, ...sslEnvKeys];
+    
+    // 不足している環境変数を確認
+    const missingEnvKeys = allRequiredEnvKeys.filter(key => !envVars.some(env => env.key === key));
     
     // 不足している環境変数を追加
     if (missingEnvKeys.length > 0) {
@@ -259,12 +271,17 @@ export const runContainer = async (
         env.push(`VIRTUAL_PORT=80`);
       }
       
-      if (!envVars.some(env => env.key === 'LETSENCRYPT_HOST')) {
-        env.push(`LETSENCRYPT_HOST=${appDomain}`);
-      }
-      
-      if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
-        env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@'}`);
+      // ワイルドカード証明書を使用しない場合のみ、LETSENCRYPT関連の環境変数を設定
+      if (!useWildcardCert) {
+        if (!envVars.some(env => env.key === 'LETSENCRYPT_HOST')) {
+          env.push(`LETSENCRYPT_HOST=${appDomain}`);
+        }
+        
+        if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
+          env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@'}`);
+        }
+      } else {
+        console.log(`Using wildcard certificate for ${appDomain} - skipping LETSENCRYPT_HOST and LETSENCRYPT_EMAIL`);
       }
     }
     
@@ -272,6 +289,7 @@ export const runContainer = async (
     console.log(`Starting container from image: ${imageTag}`);
     console.log(`Container will be named: ${containerName}`);
     console.log(`Environment variables count: ${env.length}`);
+    console.log(`Using wildcard certificate: ${useWildcardCert}`);
     
     // nginx-proxyと同じネットワークを使用
     const networkMode = process.env.DOCKER_NETWORK || 'repo_nextdock-network';
@@ -304,6 +322,7 @@ export const runContainer = async (
       Labels: {
         'com.nextdock.app': subdomain,
         'com.nextdock.type': 'app',
+        'com.nextdock.wildcard_cert': useWildcardCert ? 'true' : 'false',
       },
     });
     

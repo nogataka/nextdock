@@ -273,7 +273,7 @@ export const appsApi = {
 // デプロイ関連のAPI
 export const deploysApi = {
   // デプロイ履歴取得
-  getDeployHistory: async (appId: string): Promise<Deploy[]> => {
+  getDeployHistory: async (appId: string): Promise<{ deploys: Deploy[] }> => {
     const response = await apiClient.get<{ deploys: Deploy[] }>(`/api/deploys/app/${appId}`);
     
     // スネークケースからキャメルケースへの変換
@@ -337,7 +337,7 @@ export const deploysApi = {
       });
     }
     
-    return response.data.deploys;
+    return response.data;
   },
 
   // デプロイ詳細取得

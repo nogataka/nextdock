@@ -257,47 +257,61 @@ export const triggerDeploy = async (req: AuthenticatedRequest, res: Response): P
         console.log(`Using build method: ${buildMethod} (Dockerfile found: ${hasDockerfile})`);
         
         // Dockerイメージをビルド
-        const imageTag = `nextdock/${appId}:${deployId}`;
+        const imageTag = `nextdock/${appId}:latest`;
         
-        // 進捗ログを追加
+        // ログ更新
         await supabase
           .from('nextdock_deploys')
           .update({
-            logs: `Repository cloned. Commit: ${commitInfo.hash} - ${commitInfo.message}\nPreparing to build Docker image with method: ${buildMethod}...\n`,
+            logs: `Building Docker image: ${imageTag}...\n`
           })
           .eq('id', deployId);
         
-        await dockerService.buildImage(repoPath, imageTag, buildMethod, envVars || []);
+        // Dockerイメージをビルド
+        await dockerService.buildImage(repoPath, imageTag, buildMethod, envVars);
         
-        // ログを更新
+        // ログ更新
         await supabase
           .from('nextdock_deploys')
           .update({
-            logs: `Docker image built successfully.\nStarting container...\n`,
+            logs: `Docker image built successfully. Starting container...\n`
           })
           .eq('id', deployId);
         
-        // 既存のコンテナを停止・削除（存在する場合）
+        // 既存のコンテナを削除（存在する場合）
         if (app.container_id) {
           await dockerService.stopAndRemoveContainer(app.container_id);
         }
         
-        // 新しいコンテナを作成・起動
-        const containerId = await dockerService.runContainer(imageTag, app.subdomain, envVars || []);
+        // Dockerコンテナを実行
+        const containerId = await dockerService.runContainer(imageTag, app.subdomain, envVars);
         
-        // アプリとデプロイのステータスを更新
+        // アプリのコンテナIDとURLを更新
+        const baseDomain = process.env.BASE_DOMAIN || 'nextdock.dev';
+        const appUrl = process.env.USE_SSL === 'true' || process.env.USE_SSL === 'yes' ? 
+          `https://${app.subdomain}.${baseDomain}` : 
+          `http://${app.subdomain}.${baseDomain}`;
+
+        // アプリレコードを更新
         await supabase
           .from('nextdock_apps')
           .update({
-            status: 'running',
             container_id: containerId,
-            last_deployed_at: new Date().toISOString(),
+            status: 'running',
+            url: appUrl,
+            last_deployed_at: new Date().toISOString()
           })
           .eq('id', appId);
-        
-        const baseUrl = process.env.BASE_DOMAIN || 'nextdock.app';
-        const appUrl = app.custom_domain || `https://${app.subdomain}.${baseUrl}`;
-        
+
+        // ログ更新
+        await supabase
+          .from('nextdock_deploys')
+          .update({
+            logs: `Container started. App is now available at: ${appUrl}\nContainer ID: ${containerId}\n`
+          })
+          .eq('id', deployId);
+
+        // 成功したときの処理
         await supabase
           .from('nextdock_deploys')
           .update({
@@ -622,41 +636,56 @@ export const deployFromRepository = async (req: AuthenticatedRequest, res: Respo
         const finalBuildMethod = hasDockerfile ? 'dockerfile' : (buildMethod || 'auto');
         
         // Dockerイメージをビルド
-        const imageTag = `nextdock/${appId}:${deployId}`;
+        const imageTag = `nextdock/${appId}:latest`;
         
-        // 進捗ログを追加
+        // ログ更新
         await supabase
           .from('nextdock_deploys')
           .update({
-            logs: `Repository cloned. Commit: ${commitInfo.hash} - ${commitInfo.message}\nPreparing to build Docker image with method: ${finalBuildMethod}...\n`,
+            logs: `Building Docker image: ${imageTag}...\n`
           })
           .eq('id', deployId);
         
+        // Dockerイメージをビルド
         await dockerService.buildImage(repoPath, imageTag, finalBuildMethod, allEnvVars);
         
-        // ログを更新
+        // ログ更新
         await supabase
           .from('nextdock_deploys')
           .update({
-            logs: `Docker image built successfully.\nStarting container...\n`,
+            logs: `Docker image built successfully. Starting container...\n`
           })
           .eq('id', deployId);
         
-        // 新しいコンテナを作成・起動
-        const containerId = await dockerService.runContainer(imageTag, subdomain, allEnvVars);
+        // コンテナIDを取得
+        const containerId = await dockerService.runContainer(imageTag, app.subdomain, allEnvVars);
         
-        // アプリとデプロイのステータスを更新
+        // URLを生成
+        const baseDomain = process.env.BASE_DOMAIN || 'nextdock.dev';
+        const appUrl = process.env.USE_SSL === 'true' || process.env.USE_SSL === 'yes' ? 
+          `https://${app.subdomain}.${baseDomain}` : 
+          `http://${app.subdomain}.${baseDomain}`;
+        
+        // アプリレコードを更新
         await supabase
           .from('nextdock_apps')
           .update({
-            status: 'running',
             container_id: containerId,
-            last_deployed_at: new Date().toISOString(),
+            status: 'running',
+            url: appUrl,
+            last_deployed_at: new Date().toISOString()
           })
           .eq('id', appId);
         
-        const appUrl = `https://${appDomain}`;
+        // ログ更新
+        await supabase
+          .from('nextdock_deploys')
+          .update({
+            logs: `Container started. App is now available at: ${appUrl}\nContainer ID: ${containerId}\n`
+          })
+          .eq('id', deployId);
         
+        // 成功したときの処理
         await supabase
           .from('nextdock_deploys')
           .update({
@@ -665,31 +694,20 @@ export const deployFromRepository = async (req: AuthenticatedRequest, res: Respo
             completed_at: new Date().toISOString(),
           })
           .eq('id', deployId);
-      } catch (error: any) {
-        console.error('Deployment failed:', error);
+      } catch (deployError: any) {
+        console.error('Deployment failed:', deployError);
         
-        // エラーメッセージをより詳細に
-        let errorMessage = `Deployment failed: ${error.message}\n`;
-        
-        // Dockerfileが見つからない場合の特別なガイダンス
-        if (error.message && error.message.includes('Cannot locate specified Dockerfile')) {
-          errorMessage += `\nリポジトリにDockerfileが見つかりませんでした。以下の対処法を試してください：\n`;
-          errorMessage += `1. リポジトリにDockerfileを追加する\n`;
-          errorMessage += `2. アプリ設定でビルド方法を 'auto' または 'nextjs' に変更する\n`;
-          errorMessage += `3. package.jsonファイルが正しく配置されているか確認する\n`;
-        }
-        
-        // デプロイ失敗を記録
+        // エラーログを更新
         await supabase
           .from('nextdock_deploys')
           .update({
             status: 'failed',
-            logs: errorMessage,
+            logs: `Deployment failed: ${deployError.message}\n${deployError.stack || ''}`,
             completed_at: new Date().toISOString(),
           })
           .eq('id', deployId);
         
-        // アプリのステータスも更新
+        // アプリのステータスを「失敗」に更新
         await supabase
           .from('nextdock_apps')
           .update({
