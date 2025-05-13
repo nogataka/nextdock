@@ -475,7 +475,7 @@ export const deployFromRepository = async (req: AuthenticatedRequest, res: Respo
     );
     
     // ドメイン名の取得
-    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.c1x.biz';
+    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.dev';
     const appDomain = `${subdomain}.${baseDomain}`;
     
     // 新しいアプリレコードを作成
@@ -507,7 +507,7 @@ export const deployFromRepository = async (req: AuthenticatedRequest, res: Respo
       { key: 'VIRTUAL_HOST', value: appDomain },
       { key: 'VIRTUAL_PORT', value: '80' },
       { key: 'LETSENCRYPT_HOST', value: appDomain },
-      { key: 'LETSENCRYPT_EMAIL', value: process.env.DEFAULT_EMAIL || 'admin@nextdock.c1x.biz' }
+      { key: 'LETSENCRYPT_EMAIL', value: process.env.DEFAULT_EMAIL || 'admin@nextdock.dev' }
     ];
     
     // 環境変数を保存

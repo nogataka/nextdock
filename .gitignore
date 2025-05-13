@@ -9,6 +9,7 @@ deploy_*/
 
 /frontend.env
 /backend.env
+/ssl.env
 
 /back
 

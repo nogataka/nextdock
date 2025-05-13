@@ -241,7 +241,7 @@ export const runContainer = async (
     const env = envVars.map(e => `${e.key}=${e.value}`);
     
     // 必要なNginx Proxy環境変数が設定されているか確認
-    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.c1x.biz';
+    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.dev';
     const appDomain = `${subdomain}.${baseDomain}`;
     
     const requiredEnvKeys = ['VIRTUAL_HOST', 'VIRTUAL_PORT', 'LETSENCRYPT_HOST', 'LETSENCRYPT_EMAIL'];
@@ -264,7 +264,7 @@ export const runContainer = async (
       }
       
       if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
-        env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@nextdock.c1x.biz'}`);
+        env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@'}`);
       }
     }
     
