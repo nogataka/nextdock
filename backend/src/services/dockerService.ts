@@ -254,7 +254,7 @@ export const runContainer = async (
     const sslEnvKeys = ['LETSENCRYPT_HOST', 'LETSENCRYPT_EMAIL'];
     
     // 使用する必須環境変数を決定
-    const allRequiredEnvKeys = useWildcardCert ? requiredEnvKeys : [...requiredEnvKeys, ...sslEnvKeys];
+    const allRequiredEnvKeys = [...requiredEnvKeys, ...sslEnvKeys];
     
     // 不足している環境変数を確認
     const missingEnvKeys = allRequiredEnvKeys.filter(key => !envVars.some(env => env.key === key));
@@ -271,17 +271,13 @@ export const runContainer = async (
         env.push(`VIRTUAL_PORT=80`);
       }
       
-      // ワイルドカード証明書を使用しない場合のみ、LETSENCRYPT関連の環境変数を設定
-      if (!useWildcardCert) {
-        if (!envVars.some(env => env.key === 'LETSENCRYPT_HOST')) {
-          env.push(`LETSENCRYPT_HOST=${appDomain}`);
-        }
-        
-        if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
-          env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@'}`);
-        }
-      } else {
-        console.log(`Using wildcard certificate for ${appDomain} - skipping LETSENCRYPT_HOST and LETSENCRYPT_EMAIL`);
+      // LETSENCRYPT関連の環境変数を常に設定（ワイルドカード証明書使用時も含む）
+      if (!envVars.some(env => env.key === 'LETSENCRYPT_HOST')) {
+        env.push(`LETSENCRYPT_HOST=${appDomain}`);
+      }
+      
+      if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
+        env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@nextdock.org'}`);
       }
     }
     
