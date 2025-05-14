@@ -520,25 +520,23 @@ export const runContainer = async (
       try {
         console.log(`カスタムドメイン ${customDomain} の証明書を確認/発行します`);
         
-        // 証明書がすでに存在するか確認（ファイルの存在チェック）
-        const checkCertCmd = `docker exec acme acme.sh --list --server letsencrypt | grep -q ${customDomain} || echo "not_found"`;
+        // 証明書がすでに存在するか確認
+        const checkCertCmd = `docker exec acme /acme.sh/acme.sh --list | grep -q ${customDomain} || echo "not_found"`;
         const certCheckResult = await executeDockerCommand(checkCertCmd);
         
         if (certCheckResult.includes('not_found')) {
           console.log(`証明書が見つかりません。新規発行します: ${customDomain}`);
           
           // 証明書発行コマンド
-          const issueCertCmd = `docker exec acme acme.sh --issue --dns dns_cf -d ${customDomain} --server letsencrypt --force`;
+          const issueCertCmd = `docker exec acme /acme.sh/acme.sh --issue --dns dns_cf -d ${customDomain} --server letsencrypt --force`;
           await executeDockerCommand(issueCertCmd);
           
           // 証明書をインストール
           console.log(`証明書を適切な場所にインストールします: ${customDomain}`);
-          const installCertCmd = `docker exec acme sh -c "mkdir -p /acme.sh/certs && acme.sh --install-cert -d ${customDomain} --key-file /acme.sh/certs/${customDomain}.key --fullchain-file /acme.sh/certs/${customDomain}.crt --server letsencrypt"`;
+          const installCertCmd = `docker exec acme /acme.sh/acme.sh --install-cert -d ${customDomain} --key-file /acme.sh/certs/${customDomain}.key --fullchain-file /acme.sh/certs/${customDomain}.crt --reloadcmd "docker restart nginx-proxy"`;
           await executeDockerCommand(installCertCmd);
           
-          // Nginxリロード
           console.log('証明書を発行しました。Nginxを再起動します');
-          await executeDockerCommand('docker restart nginx-proxy');
         } else {
           console.log(`証明書はすでに存在します: ${customDomain}`);
         }
