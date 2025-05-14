@@ -521,14 +521,14 @@ export const runContainer = async (
         console.log(`カスタムドメイン ${customDomain} の証明書を確認/発行します`);
         
         // 証明書がすでに存在するか確認（ファイルの存在チェック）
-        const checkCertCmd = `docker exec acme acme.sh --list | grep -q ${customDomain} || echo "not_found"`;
+        const checkCertCmd = `docker exec acme acme.sh --list --server letsencrypt | grep -q ${customDomain} || echo "not_found"`;
         const certCheckResult = await executeDockerCommand(checkCertCmd);
         
         if (certCheckResult.includes('not_found')) {
           console.log(`証明書が見つかりません。新規発行します: ${customDomain}`);
           
           // 証明書発行コマンド
-          const issueCertCmd = `docker exec acme acme.sh --issue --dns dns_cf -d ${customDomain} --server acme`;
+          const issueCertCmd = `docker exec acme acme.sh --issue --dns dns_cf -d ${customDomain} --server letsencrypt`;
           await executeDockerCommand(issueCertCmd);
           
           // Nginxリロード
