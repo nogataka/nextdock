@@ -1,14 +1,12 @@
+import axios from 'axios';
+import simpleGit, { SimpleGit } from 'simple-git';
 import Docker from 'dockerode';
 import fs from 'fs/promises';
 import path from 'path';
-import { Readable } from 'stream';
-import { promisify } from 'util';
 import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
-import { DockerBuildOptions, EnvVar, AppError } from '../types';
+import { promisify } from 'util';
 import { exec } from 'child_process';
-import { PORT_RANGE_START, PORT_RANGE_END } from '../config';
-import { checkNextjsProject } from './githubService';
+import { GithubBranch, AppError, CommitInfo, EnvVar } from '../types';
 
 dotenv.config();
 
@@ -18,6 +16,220 @@ const execPromise = promisify(exec);
 const docker = new Docker({
   socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock',
 });
+
+// 外部コマンド実行関数
+async function executeDockerCommand(command: string): Promise<string> {
+  try {
+    console.log(`実行コマンド: ${command}`);
+    const { stdout, stderr } = await execPromise(command);
+    if (stderr && !stderr.includes('warning')) {
+      console.error(`コマンドエラー: ${stderr}`);
+    }
+    return stdout.trim();
+  } catch (error: any) {
+    console.error(`コマンド実行エラー: ${error.message}`);
+    throw error;
+  }
+}
+
+// GitHub APIのベースURL
+const GITHUB_API_URL = 'https://api.github.com';
+
+// リポジトリの存在を確認
+export const checkRepository = async (repoFullName: string, accessToken: string): Promise<boolean> => {
+  try {
+    const response = await axios.get(`${GITHUB_API_URL}/repos/${repoFullName}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+    
+    return response.status === 200;
+  } catch (error) {
+    return false;
+  }
+};
+
+// リポジトリのブランチを取得
+export const getRepositoryBranches = async (repoFullName: string, accessToken: string): Promise<GithubBranch[]> => {
+  try {
+    const response = await axios.get(`${GITHUB_API_URL}/repos/${repoFullName}/branches`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching repository branches:', error);
+    throw error;
+  }
+};
+
+// リポジトリをクローン
+export const cloneRepository = async (
+  repositoryUrl: string,
+  branch: string = 'main',
+  targetPath: string
+): Promise<CommitInfo> => {
+  try {
+    console.log(`BEGIN cloneRepository to ${targetPath}`);
+    console.log(`Repository URL: ${repositoryUrl}`);
+    console.log(`Branch: ${branch}`);
+    
+    // URLの形式を検証
+    if (!repositoryUrl.includes('github.com')) {
+      console.error(`Invalid repository URL format: ${repositoryUrl}`);
+      console.error('URLにはgithub.comドメインが含まれている必要があります');
+      throw new Error(`Invalid repository URL: ${repositoryUrl} - URL must include github.com domain`);
+    }
+    
+    if (!repositoryUrl.endsWith('.git')) {
+      console.warn(`Warning: Repository URL does not end with .git: ${repositoryUrl}`);
+      repositoryUrl = `${repositoryUrl}.git`;
+      console.log(`Modified repository URL: ${repositoryUrl}`);
+    }
+    
+    // ディレクトリが存在するか確認し、存在する場合は削除
+    try {
+      await fs.access(targetPath);
+      console.log(`Target path ${targetPath} already exists, removing...`);
+      await fs.rm(targetPath, { recursive: true, force: true });
+      console.log(`Successfully removed existing directory: ${targetPath}`);
+    } catch (error) {
+      // ディレクトリが存在しない場合は問題ない
+      console.log(`Target path ${targetPath} does not exist, will create it`);
+    }
+
+    // 親ディレクトリが存在することを確認
+    const parentDir = path.dirname(targetPath);
+    try {
+      await fs.access(parentDir);
+      console.log(`Parent directory exists: ${parentDir}`);
+    } catch (error) {
+      console.log(`Creating parent directory: ${parentDir}`);
+      await fs.mkdir(parentDir, { recursive: true });
+    }
+
+    // ディレクトリを作成
+    await fs.mkdir(targetPath, { recursive: true });
+    console.log(`Created target directory: ${targetPath}`);
+
+    // Git操作の初期化
+    const git: SimpleGit = simpleGit();
+    console.log(`Initialized git client, starting clone...`);
+
+    // リポジトリをクローン
+    console.log(`Cloning ${repositoryUrl} to ${targetPath}...`);
+    await git.clone(repositoryUrl, targetPath, ['--depth', '1', '--branch', branch]);
+    console.log(`Successfully cloned repository to ${targetPath}`);
+
+    // ファイル一覧を取得（デバッグ用）
+    try {
+      const files = await fs.readdir(targetPath);
+      console.log(`Files in cloned repository (${files.length} items):`);
+      for (const file of files) {
+        const filePath = path.join(targetPath, file);
+        const stats = await fs.stat(filePath);
+        console.log(`- ${file} (${stats.isDirectory() ? 'directory' : 'file'})`);
+      }
+    } catch (err) {
+      console.error(`Error listing repository files:`, err);
+    }
+
+    // 最新のコミット情報を取得
+    console.log(`Getting latest commit info...`);
+    const gitInDir = simpleGit(targetPath);
+    const log = await gitInDir.log({ maxCount: 1 });
+    
+    if (log.latest) {
+      console.log(`Latest commit: ${log.latest.hash} - ${log.latest.message}`);
+      return {
+        hash: log.latest.hash,
+        message: log.latest.message,
+        date: log.latest.date,
+        author: log.latest.author_name
+      };
+    }
+    
+    console.log(`No commit info found, returning defaults`);
+    return {
+      hash: 'unknown',
+      message: 'No commit info available',
+      date: new Date().toISOString(),
+      author: 'unknown'
+    };
+  } catch (error: any) {
+    console.error(`Error cloning repository:`, error);
+    throw new Error(`Failed to clone repository: ${error.message}`);
+  } finally {
+    console.log(`END cloneRepository`);
+  }
+};
+
+// package.jsonの存在を確認してNext.jsプロジェクトかどうかを判定
+export const checkNextjsProject = async (repoPath: string): Promise<boolean> => {
+  try {
+    // package.jsonの存在を確認
+    const packageJsonPath = path.join(repoPath, 'package.json');
+    const packageJsonExists = await fs.access(packageJsonPath)
+      .then(() => true)
+      .catch(() => false);
+    
+    if (!packageJsonExists) {
+      return false;
+    }
+    
+    // package.jsonの内容を読み込み
+    const packageJsonContent = await fs.readFile(packageJsonPath, 'utf8');
+    const packageJson = JSON.parse(packageJsonContent);
+    
+    // Next.jsがdependenciesに含まれているか確認
+    return !!(
+      (packageJson.dependencies && packageJson.dependencies.next) ||
+      (packageJson.devDependencies && packageJson.devDependencies.next)
+    );
+  } catch (error) {
+    console.error('Error checking Next.js project:', error);
+    return false;
+  }
+};
+
+// リポジトリにwebhookを追加
+export const addWebhook = async (
+  repoFullName: string, 
+  accessToken: string, 
+  webhookUrl: string
+): Promise<any> => {
+  try {
+    const response = await axios.post(
+      `${GITHUB_API_URL}/repos/${repoFullName}/hooks`,
+      {
+        name: 'web',
+        active: true,
+        events: ['push'],
+        config: {
+          url: webhookUrl,
+          content_type: 'json',
+          insecure_ssl: '0',
+        },
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      }
+    );
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error adding webhook to repository:', error);
+    throw error;
+  }
+};
 
 /**
  * Dockerfileの存在を確認する
@@ -237,59 +449,40 @@ export const runContainer = async (
     // コンテナ名を生成
     const containerName = `nextdock-${subdomain}`;
     
+    console.log(`BEGIN runContainer - imageTag: ${imageTag}, containerName: ${containerName}`);
+    
     // 環境変数を整形
     const env = envVars.map(e => `${e.key}=${e.value}`);
     
     // 必要なNginx Proxy環境変数が設定されているか確認
-    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.dev';
+    const baseDomain = process.env.BASE_DOMAIN || 'nextdock.org';
     const appDomain = `${subdomain}.${baseDomain}`;
     
-    // ワイルドカード証明書を使用するかどうかの設定を確認
-    const useWildcardCert = process.env.USE_WILDCARD_CERT === 'true';
-    
-    // ワイルドカード証明書を使用する場合は必須環境変数からLETSENCRYPT関連の変数を除外
-    const requiredEnvKeys = ['VIRTUAL_HOST', 'VIRTUAL_PORT'];
-    
-    // SSL証明書関連の環境変数（ワイルドカード証明書を使用しない場合のみ必要）
-    const sslEnvKeys = ['LETSENCRYPT_HOST', 'LETSENCRYPT_EMAIL'];
-    
-    // 使用する必須環境変数を決定
-    const allRequiredEnvKeys = [...requiredEnvKeys, ...sslEnvKeys];
-    
-    // 不足している環境変数を確認
-    const missingEnvKeys = allRequiredEnvKeys.filter(key => !envVars.some(env => env.key === key));
-    
-    // 不足している環境変数を追加
-    if (missingEnvKeys.length > 0) {
-      console.log(`Adding missing Nginx Proxy environment variables: ${missingEnvKeys.join(', ')}`);
-      
-      if (!envVars.some(env => env.key === 'VIRTUAL_HOST')) {
-        env.push(`VIRTUAL_HOST=${appDomain}`);
-      }
-      
-      if (!envVars.some(env => env.key === 'VIRTUAL_PORT')) {
-        env.push(`VIRTUAL_PORT=80`);
-      }
-      
-      // LETSENCRYPT関連の環境変数を常に設定（ワイルドカード証明書使用時も含む）
-      if (!envVars.some(env => env.key === 'LETSENCRYPT_HOST')) {
-        env.push(`LETSENCRYPT_HOST=${appDomain}`);
-      }
-      
-      if (!envVars.some(env => env.key === 'LETSENCRYPT_EMAIL')) {
-        env.push(`LETSENCRYPT_EMAIL=${process.env.DEFAULT_EMAIL || 'admin@nextdock.org'}`);
+    // カスタムドメインを検出（VIRTUAL_HOSTから）
+    let customDomain = '';
+    const virtualHostEnv = envVars.find(e => e.key === 'VIRTUAL_HOST');
+    if (virtualHostEnv && virtualHostEnv.value) {
+      if (!virtualHostEnv.value.endsWith(`.${baseDomain}`)) {
+        customDomain = virtualHostEnv.value;
+        console.log(`カスタムドメインを検出: ${customDomain}`);
       }
     }
     
-    // Dockerfileでの設定を確認するためのログ
-    console.log(`Starting container from image: ${imageTag}`);
-    console.log(`Container will be named: ${containerName}`);
-    console.log(`Environment variables count: ${env.length}`);
-    console.log(`Using wildcard certificate: ${useWildcardCert}`);
+    // 必要な環境変数が設定されているか確認
+    const requiredEnvKeys = ['VIRTUAL_HOST', 'VIRTUAL_PORT'];
     
-    // nginx-proxyと同じネットワークを使用
-    const networkMode = process.env.DOCKER_NETWORK || 'repo_nextdock-network';
-    console.log(`Using network: ${networkMode}`);
+    // 不足している環境変数を追加
+    if (!envVars.some(env => env.key === 'VIRTUAL_HOST')) {
+      env.push(`VIRTUAL_HOST=${appDomain}`);
+    }
+    
+    if (!envVars.some(env => env.key === 'VIRTUAL_PORT')) {
+      env.push(`VIRTUAL_PORT=80`);
+    }
+    
+    // Nginxネットワークの設定
+    const networkMode = process.env.DOCKER_NETWORK || 'nextdock-network';
+    console.log(`使用ネットワーク: ${networkMode}`);
     
     // コンテナを作成
     const container = await docker.createContainer({
@@ -301,45 +494,78 @@ export const runContainer = async (
       },
       HostConfig: {
         PortBindings: {
-          // ランダムなホストポートを割り当て
           '80/tcp': [{ HostPort: '0' }],
         },
-        // リソース制限（オプション）
         Memory: 512 * 1024 * 1024, // 512MB
         MemorySwap: 1024 * 1024 * 1024, // 1GB
         NanoCpus: 1000000000, // 1 CPU
         RestartPolicy: {
           Name: 'always',
         },
-        // nginx-proxyと同じネットワークに接続
         NetworkMode: networkMode,
       },
-      // コンテナラベル（管理用）
       Labels: {
         'com.nextdock.app': subdomain,
         'com.nextdock.type': 'app',
-        'com.nextdock.wildcard_cert': useWildcardCert ? 'true' : 'false',
+        'com.nextdock.custom_domain': customDomain || 'false',
       },
     });
     
     // コンテナを起動
     await container.start();
+    console.log(`コンテナを起動しました: ${containerName}`);
     
-    // 割り当てられたポートを取得
+    // カスタムドメインの証明書を発行（必要な場合）
+    if (customDomain) {
+      try {
+        console.log(`カスタムドメイン ${customDomain} の証明書を確認/発行します`);
+        
+        // 証明書がすでに存在するか確認（ファイルの存在チェック）
+        const checkCertCmd = `docker exec acme acme.sh --list | grep -q ${customDomain} || echo "not_found"`;
+        const certCheckResult = await executeDockerCommand(checkCertCmd);
+        
+        if (certCheckResult.includes('not_found')) {
+          console.log(`証明書が見つかりません。新規発行します: ${customDomain}`);
+          
+          // 証明書発行コマンド
+          const issueCertCmd = `docker exec acme acme.sh --issue --dns dns_cf -d ${customDomain} --server acme`;
+          await executeDockerCommand(issueCertCmd);
+          
+          // Nginxリロード
+          console.log('証明書を発行しました。Nginxを再起動します');
+          await executeDockerCommand('docker restart nginx-proxy');
+        } else {
+          console.log(`証明書はすでに存在します: ${customDomain}`);
+        }
+      } catch (certError: any) {
+        console.error(`証明書発行エラー: ${certError.message}`);
+        // 証明書発行に失敗してもコンテナ起動は続行
+      }
+    }
+    
+    // コンテナ情報を取得
     const containerInfo = await container.inspect();
     const port = containerInfo.NetworkSettings.Ports['80/tcp'] ? 
       containerInfo.NetworkSettings.Ports['80/tcp'][0].HostPort : null;
     
     if (!port) {
-      throw new Error('Failed to get container port');
+      console.warn('コンテナポートの取得に失敗しました');
+    } else {
+      console.log(`ポートマッピング: ホスト ${port} -> コンテナ 80`);
     }
     
-    console.log(`Container started successfully. Port mapping: Host ${port} -> Container 80`);
-    console.log(`App will be available at: https://${appDomain}`);
+    // URLを表示
+    const protocol = process.env.USE_SSL === 'true' ? 'https' : 'http';
+    const url = customDomain ? 
+      `${protocol}://${customDomain}` : 
+      `${protocol}://${appDomain}`;
+    
+    console.log(`アプリは次のURLで利用可能: ${url}`);
+    console.log(`END runContainer - container ID: ${container.id}`);
     
     return container.id;
-  } catch (error) {
-    console.error('Error running Docker container:', error);
+  } catch (error: any) {
+    console.error('Dockerコンテナ実行エラー:', error);
     throw error;
   }
 };
@@ -539,6 +765,11 @@ export const ensureGitInstalled = async (repoPath: string): Promise<void> => {
 };
 
 export default {
+  checkRepository,
+  getRepositoryBranches,
+  cloneRepository,
+  checkNextjsProject,
+  addWebhook,
   checkDockerfile,
   generateNextjsDockerfile,
   buildImage,
