@@ -528,12 +528,12 @@ export const runContainer = async (
           console.log(`証明書が見つかりません。新規発行します: ${customDomain}`);
           
           // 証明書発行コマンド
-          const issueCertCmd = `docker exec acme acme.sh --issue --dns dns_cf -d ${customDomain} --server letsencrypt`;
+          const issueCertCmd = `docker exec acme acme.sh --issue --dns dns_cf -d ${customDomain} --server letsencrypt --force`;
           await executeDockerCommand(issueCertCmd);
           
           // 証明書をインストール
           console.log(`証明書を適切な場所にインストールします: ${customDomain}`);
-          const installCertCmd = `docker exec acme sh -c "mkdir -p /acme.sh/certs && acme.sh --install-cert -d ${customDomain} --key-file /acme.sh/${customDomain}/${customDomain}.key --fullchain-file /acme.sh/${customDomain}/fullchain.cer --server letsencrypt && cp /acme.sh/${customDomain}/${customDomain}.key /acme.sh/certs/${customDomain}.key && cp /acme.sh/${customDomain}/fullchain.cer /acme.sh/certs/${customDomain}.crt"`;
+          const installCertCmd = `docker exec acme sh -c "mkdir -p /acme.sh/certs && acme.sh --install-cert -d ${customDomain} --key-file /acme.sh/certs/${customDomain}.key --fullchain-file /acme.sh/certs/${customDomain}.crt --server letsencrypt"`;
           await executeDockerCommand(installCertCmd);
           
           // Nginxリロード
