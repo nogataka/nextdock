@@ -537,7 +537,7 @@ export const runContainer = async (
           console.log(`証明書が見つかりません。新規発行します: ${customDomain}`);
           
           // 証明書発行コマンド
-          const issueCertCmd = `docker exec acme sh -c "cd /root/.acme.sh && ./acme.sh --issue --dns dns_cf -d ${customDomain} --server ${letsEncryptServer} --force"`;
+          const issueCertCmd = `docker exec acme sh -c "cd /root/.acme.sh && ./acme.sh --issue --dns dns_cf -d ${customDomain} --server ${letsEncryptServer} --cert-home /root/.acme.sh --force"`;
           await executeDockerCommand(issueCertCmd);
           
           // 証明書ディレクトリを動的に検索
