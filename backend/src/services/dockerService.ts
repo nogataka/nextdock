@@ -537,7 +537,7 @@ export const runContainer = async (
           console.log(`証明書が見つかりません。新規発行します: ${customDomain}`);
           
           // 証明書発行コマンド
-          const issueCertCmd = `docker exec acme sh -c "cd /root/.acme.sh && ./acme.sh --issue --dns dns_cf -d ${customDomain} --server ${letsEncryptServer} --cert-home /root/.acme.sh --dnssleep 60 --force-sleep 90000 --force"`;
+          const issueCertCmd = `docker exec acme sh -c "cd /root/.acme.sh && ./acme.sh --issue --dns dns_cf -d ${customDomain} --server ${letsEncryptServer} --cert-home /root/.acme.sh --dnssleep 60 --force"`;
           await executeDockerCommand(issueCertCmd);
           
           // 証明書ディレクトリを動的に検索
@@ -724,7 +724,7 @@ export const runContainer = async (
         console.error('証明書発行の詳細ログを確認するには:');
         const useStaging = process.env.USE_LETSENCRYPT_STAGING === 'true';
         const letsEncryptServer = useStaging ? 'letsencrypt_test' : 'letsencrypt';
-        console.error(`docker exec acme sh -c "cd /root/.acme.sh && ./acme.sh --issue --dns dns_cf -d ${customDomain} --server ${letsEncryptServer} --force --debug"`);
+        console.error(`docker exec acme sh -c "cd /root/.acme.sh && ./acme.sh --issue --dns dns_cf -d ${customDomain} --server ${letsEncryptServer} --cert-home /root/.acme.sh --dnssleep 60 --force --debug"`);
         // 証明書発行に失敗してもコンテナ起動は続行
       }
     }
