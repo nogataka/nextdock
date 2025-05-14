@@ -542,163 +542,125 @@ export const runContainer = async (
           
           // 証明書ディレクトリを動的に検索
           console.log(`証明書ディレクトリを検索中...`);
-          let certDir = '';
           
-          try {
-            // 複数の可能性のある場所を確認
-            console.log('複数の可能性のある場所を確認しています...');
-            const possibleDirs = [
-              `/root/.acme.sh/${customDomain}_ecc`,
-              `/root/.acme.sh/${customDomain}`,
-              `/root/.acme.sh/certs`
-            ];
+          // 証明書ディレクトリを探す
+          const findCertDirCmd = `docker exec acme sh -c "
+DOMAIN=${customDomain}
+CERT_DIR=''
+
+# 複数の可能性のある場所を確認
+for DIR in '/root/.acme.sh/'\"$DOMAIN\"'_ecc' '/root/.acme.sh/'\"$DOMAIN\" '/root/.acme.sh/certs'; do
+  if [ -d \"$DIR\" ]; then
+    echo \"ディレクトリが見つかりました: $DIR\"
+    
+    # このディレクトリに証明書ファイルがあるか確認
+    if [ -f \"$DIR/\"\"$DOMAIN\"'.key' ] || [ -f \"$DIR/fullchain.cer\" ] || [ -f \"$DIR/\"\"$DOMAIN\"'.cer' ]; then
+      CERT_DIR=\"$DIR\"
+      echo \"証明書ファイルを含むディレクトリ: $CERT_DIR\"
+      break
+    fi
+  fi
+done
+
+# 証明書ディレクトリが見つからない場合はファイルから検索
+if [ -z \"$CERT_DIR\" ]; then
+  echo \"証明書ディレクトリが見つかりません。ファイルから検索します...\"
+  KEY_FILE=$(find /root/.acme.sh -name \"$DOMAIN.key\" 2>/dev/null | head -n 1)
+  
+  if [ -n \"$KEY_FILE\" ]; then
+    CERT_DIR=$(dirname \"$KEY_FILE\")
+    echo \"キーファイルから見つかったディレクトリ: $CERT_DIR\"
+  else
+    # ディレクトリ名から検索
+    DIR_SEARCH=$(find /root/.acme.sh -type d -name \"*$DOMAIN*\" | head -n 1)
+    if [ -n \"$DIR_SEARCH\" ]; then
+      CERT_DIR=\"$DIR_SEARCH\"
+      echo \"ディレクトリ名から見つかったディレクトリ: $CERT_DIR\"
+    fi
+  fi
+fi
+
+echo \"$CERT_DIR\"
+"`;
+          
+          let certDir = await executeDockerCommand(findCertDirCmd);
+          certDir = certDir.trim();
+          
+          if (!certDir || certDir === '') {
+            console.error(`証明書ディレクトリが見つかりません。ディレクトリ構造を確認します...`);
+            await executeDockerCommand(`docker exec acme sh -c "find /root/.acme.sh -type d | sort"`);
+            throw new Error(`証明書ディレクトリが見つかりません: ${customDomain}`);
+          }
+          
+          console.log(`証明書ディレクトリ: ${certDir}`);
+          
+          // 証明書をnginx-proxyが期待する場所にコピー
+          console.log(`証明書を適切な場所にインストールします: ${customDomain}`);
+          await executeDockerCommand(`docker exec acme sh -c "mkdir -p /root/.acme.sh/certs"`);
+          
+          // キーファイルと証明書ファイルを検索
+          const findFilesCmd = `docker exec acme sh -c "
+DOMAIN=${customDomain}
+CERT_DIR='${certDir}'
+
+# キーファイルを探して処理
+KEY_FILE=''
+if [ -f \"$CERT_DIR/\"\"$DOMAIN\"'.key' ]; then
+  KEY_FILE=\"$CERT_DIR/\"\"$DOMAIN\"'.key'
+  echo \"標準キーファイルが見つかりました: $KEY_FILE\"
+else
+  KEY_FILE=$(find \"$CERT_DIR\" -name '*.key' 2>/dev/null | head -n 1)
+  if [ -n \"$KEY_FILE\" ]; then
+    echo \"代替キーファイルが見つかりました: $KEY_FILE\"
+  fi
+fi
+
+# 証明書ファイルを探して処理
+CERT_FILE=''
+if [ -f \"$CERT_DIR/fullchain.cer\" ]; then
+  CERT_FILE=\"$CERT_DIR/fullchain.cer\"
+  echo \"標準証明書ファイルが見つかりました: $CERT_FILE\"
+elif [ -f \"$CERT_DIR/\"\"$DOMAIN\"'.cer' ]; then
+  CERT_FILE=\"$CERT_DIR/\"\"$DOMAIN\"'.cer'
+  echo \"ドメイン名証明書ファイルが見つかりました: $CERT_FILE\"
+else
+  CERT_FILE=$(find \"$CERT_DIR\" -name '*.cer' -o -name '*.crt' 2>/dev/null | head -n 1)
+  if [ -n \"$CERT_FILE\" ]; then
+    echo \"代替証明書ファイルが見つかりました: $CERT_FILE\"
+  fi
+fi
+
+echo \"$KEY_FILE|$CERT_FILE\"
+"`;
+          
+          const filesResult = await executeDockerCommand(findFilesCmd);
+          const [keyFile, certFile] = filesResult.split('|').map(file => file.trim());
+          
+          // ファイルが見つかった場合はコピー
+          if (keyFile && certFile) {
+            console.log(`キーファイル: ${keyFile}`);
+            console.log(`証明書ファイル: ${certFile}`);
             
-            // 各ディレクトリを確認
-            for (const dir of possibleDirs) {
-              const dirExists = await executeDockerCommand(`docker exec acme sh -c "[ -d '${dir}' ] && echo 'exists' || echo 'not_found'"`);
-              if (dirExists.includes('exists')) {
-                // このディレクトリに証明書ファイルがあるか確認
-                const hasFiles = await executeDockerCommand(
-                  `docker exec acme sh -c "[ -f '${dir}/${customDomain}.key' ] || [ -f '${dir}/fullchain.cer' ] || [ -f '${dir}/${customDomain}.cer' ] && echo 'has_files' || echo 'no_files'"`
-                );
-                
-                if (hasFiles.includes('has_files')) {
-                  certDir = dir;
-                  console.log(`証明書ファイルを含むディレクトリが見つかりました: ${certDir}`);
-                  break;
-                } else {
-                  console.log(`ディレクトリは存在しますが、証明書ファイルがありません: ${dir}`);
-                }
-              }
-            }
+            // 証明書ファイルをコピー
+            const copyKeyResult = await executeDockerCommand(`docker exec acme sh -c "cp ${keyFile} /root/.acme.sh/certs/${customDomain}.key && echo 'success' || echo 'failed'"`);
+            console.log(`キーファイルのコピー: ${copyKeyResult.includes('success') ? '成功' : '失敗'}`);
             
-            // ディレクトリが見つからない場合はファイルから検索
-            if (!certDir) {
-              console.log('証明書ディレクトリが見つかりません。ファイルから検索します...');
-              // まず、ファイル名から証明書ディレクトリを検索
-              const certFileSearch = await executeDockerCommand(`docker exec acme sh -c "find /root/.acme.sh -name '*.key' -o -name '*.cer' | grep ${customDomain} | head -n 1 || echo ''"`);
-              
-              if (certFileSearch && certFileSearch.trim() !== '') {
-                // ファイルからディレクトリ名を取得
-                certDir = await executeDockerCommand(`docker exec acme sh -c "dirname ${certFileSearch.trim()}"`);
-                console.log(`証明書ファイルから見つかったディレクトリ: ${certDir.trim()}`);
-              } else {
-                // ディレクトリ名から検索
-                const dirSearch = await executeDockerCommand(`docker exec acme sh -c "find /root/.acme.sh -type d -name '*${customDomain}*' | head -n 1 || echo ''"`);
-                
-                if (dirSearch && dirSearch.trim() !== '') {
-                  certDir = dirSearch.trim();
-                  console.log(`ディレクトリ名から見つかったディレクトリ: ${certDir}`);
-                }
-              }
-            }
+            const copyCertResult = await executeDockerCommand(`docker exec acme sh -c "cp ${certFile} /root/.acme.sh/certs/${customDomain}.crt && echo 'success' || echo 'failed'"`);
+            console.log(`証明書ファイルのコピー: ${copyCertResult.includes('success') ? '成功' : '失敗'}`);
             
-            // 証明書ディレクトリが見つからない場合
-            if (!certDir || certDir.trim() === '') {
-              console.error(`証明書ディレクトリが見つかりません。ディレクトリ構造を確認します...`);
-              await executeDockerCommand(`docker exec acme sh -c "find /root/.acme.sh -type d | sort"`);
-              throw new Error(`証明書ディレクトリが見つかりません: ${customDomain}`);
-            }
+            // 権限を設定
+            console.log('証明書の権限を設定中...');
+            await executeDockerCommand(`docker exec acme sh -c "chmod 644 /root/.acme.sh/certs/${customDomain}.key /root/.acme.sh/certs/${customDomain}.crt 2>/dev/null && echo '権限を設定しました' || echo '権限の設定に失敗しました'"`);
             
-            console.log(`証明書ディレクトリ: ${certDir.trim()}`);
-            
-            // 証明書をnginx-proxyが期待する場所にコピー
-            console.log(`証明書を適切な場所にインストールします: ${customDomain}`);
-            await executeDockerCommand(`docker exec acme sh -c "mkdir -p /root/.acme.sh/certs"`);
-            
-            // キーファイルと証明書ファイルを検索
-            console.log('キーファイルと証明書ファイルを検索中...');
-            
-            // キーファイルを検索
-            let keyFile = '';
-            const keyFilePatterns = [
-              `${certDir.trim()}/${customDomain}.key`,
-              `${certDir.trim()}/*.key`
-            ];
-            
-            for (const pattern of keyFilePatterns) {
-              try {
-                const result = await executeDockerCommand(`docker exec acme sh -c "ls ${pattern} 2>/dev/null | head -n 1 || echo ''"`);
-                if (result && result.trim() !== '') {
-                  keyFile = result.trim();
-                  console.log(`キーファイルが見つかりました: ${keyFile}`);
-                  break;
-                }
-              } catch (e) {
-                console.log(`パターン ${pattern} でキーファイルが見つかりませんでした`);
-              }
-            }
-            
-            if (!keyFile) {
-              try {
-                const findResult = await executeDockerCommand(`docker exec acme sh -c "find ${certDir.trim()} -name '*.key' | head -n 1 || echo ''"`);
-                if (findResult && findResult.trim() !== '') {
-                  keyFile = findResult.trim();
-                  console.log(`検索によりキーファイルが見つかりました: ${keyFile}`);
-                }
-              } catch (e) {
-                console.error(`キーファイルの検索に失敗しました: ${e}`);
-              }
-            }
-            
-            // 証明書ファイルを検索
-            let certFile = '';
-            const certFilePatterns = [
-              `${certDir.trim()}/fullchain.cer`,
-              `${certDir.trim()}/${customDomain}.cer`,
-              `${certDir.trim()}/${customDomain}.crt`,
-              `${certDir.trim()}/*.cer`,
-              `${certDir.trim()}/*.crt`
-            ];
-            
-            for (const pattern of certFilePatterns) {
-              try {
-                const result = await executeDockerCommand(`docker exec acme sh -c "ls ${pattern} 2>/dev/null | head -n 1 || echo ''"`);
-                if (result && result.trim() !== '') {
-                  certFile = result.trim();
-                  console.log(`証明書ファイルが見つかりました: ${certFile}`);
-                  break;
-                }
-              } catch (e) {
-                console.log(`パターン ${pattern} で証明書ファイルが見つかりませんでした`);
-              }
-            }
-            
-            if (!certFile) {
-              try {
-                const findResult = await executeDockerCommand(`docker exec acme sh -c "find ${certDir.trim()} -name '*.cer' -o -name '*.crt' | head -n 1 || echo ''"`);
-                if (findResult && findResult.trim() !== '') {
-                  certFile = findResult.trim();
-                  console.log(`検索により証明書ファイルが見つかりました: ${certFile}`);
-                }
-              } catch (e) {
-                console.error(`証明書ファイルの検索に失敗しました: ${e}`);
-              }
-            }
-            
-            // ファイルが見つかった場合はコピー
-            if (keyFile && keyFile.trim() !== '' && certFile && certFile.trim() !== '') {
-              console.log('証明書ファイルをコピーします...');
-              await executeDockerCommand(`docker exec acme sh -c "cp ${keyFile} /root/.acme.sh/certs/${customDomain}.key && echo 'キーファイルをコピーしました' || echo 'キーファイルのコピーに失敗しました'"`);
-              await executeDockerCommand(`docker exec acme sh -c "cp ${certFile} /root/.acme.sh/certs/${customDomain}.crt && echo '証明書ファイルをコピーしました' || echo '証明書ファイルのコピーに失敗しました'"`);
-              
-              // 権限を設定
-              console.log('証明書の権限を設定中...');
-              await executeDockerCommand(`docker exec acme sh -c "chmod 644 /root/.acme.sh/certs/${customDomain}.key /root/.acme.sh/certs/${customDomain}.crt 2>/dev/null && echo '権限を設定しました' || echo '権限の設定に失敗しました'"`);
-              
-              // Nginxを再起動
-              console.log('Nginxを再起動して証明書を適用中...');
-              await executeDockerCommand('docker restart nginx-proxy');
-              console.log('証明書のインストールが完了しました');
-            } else {
-              console.error('証明書ファイルが見つかりません:');
-              console.error(`キーファイル: ${keyFile || 'なし'}`);
-              console.error(`証明書ファイル: ${certFile || 'なし'}`);
-              throw new Error('必要な証明書ファイルが見つかりません');
-            }
-          } catch (error) {
-            console.error(`証明書の設定中にエラーが発生しました: ${error}`);
-            throw error;
+            // Nginxを再起動
+            console.log('Nginxを再起動して証明書を適用中...');
+            await executeDockerCommand('docker restart nginx-proxy');
+            console.log('証明書のインストールが完了しました');
+          } else {
+            console.error('証明書ファイルが見つかりません:');
+            console.error(`キーファイル: ${keyFile || 'なし'}`);
+            console.error(`証明書ファイル: ${certFile || 'なし'}`);
+            throw new Error('必要な証明書ファイルが見つかりません');
           }
         } else {
           console.log(`証明書はすでに存在します: ${customDomain}`);
@@ -710,74 +672,119 @@ export const runContainer = async (
           if (certInstalled.includes('not_installed')) {
             console.log(`証明書は存在しますが、インストールされていません。インストールします...`);
             
-            try {
-              // まず、ファイル名から証明書ディレクトリを検索
-              const certFileSearch = await executeDockerCommand(`docker exec acme sh -c "find /root/.acme.sh -name '*.key' -o -name '*.cer' | grep ${customDomain} | head -n 1"`);
-              let certDir = '';
+            // 証明書ディレクトリを探す
+            const findCertDirCmd = `docker exec acme sh -c "
+DOMAIN=${customDomain}
+CERT_DIR=''
+
+# 複数の可能性のある場所を確認
+for DIR in '/root/.acme.sh/'\"$DOMAIN\"'_ecc' '/root/.acme.sh/'\"$DOMAIN\" '/root/.acme.sh/certs'; do
+  if [ -d \"$DIR\" ]; then
+    echo \"ディレクトリが見つかりました: $DIR\"
+    
+    # このディレクトリに証明書ファイルがあるか確認
+    if [ -f \"$DIR/\"\"$DOMAIN\"'.key' ] || [ -f \"$DIR/fullchain.cer\" ] || [ -f \"$DIR/\"\"$DOMAIN\"'.cer' ]; then
+      CERT_DIR=\"$DIR\"
+      echo \"証明書ファイルを含むディレクトリ: $CERT_DIR\"
+      break
+    fi
+  fi
+done
+
+# 証明書ディレクトリが見つからない場合はファイルから検索
+if [ -z \"$CERT_DIR\" ]; then
+  echo \"証明書ディレクトリが見つかりません。ファイルから検索します...\"
+  KEY_FILE=$(find /root/.acme.sh -name \"$DOMAIN.key\" 2>/dev/null | head -n 1)
+  
+  if [ -n \"$KEY_FILE\" ]; then
+    CERT_DIR=$(dirname \"$KEY_FILE\")
+    echo \"キーファイルから見つかったディレクトリ: $CERT_DIR\"
+  else
+    # ディレクトリ名から検索
+    DIR_SEARCH=$(find /root/.acme.sh -type d -name \"*$DOMAIN*\" | head -n 1)
+    if [ -n \"$DIR_SEARCH\" ]; then
+      CERT_DIR=\"$DIR_SEARCH\"
+      echo \"ディレクトリ名から見つかったディレクトリ: $CERT_DIR\"
+    fi
+  fi
+fi
+
+echo \"$CERT_DIR\"
+"`;
+            
+            let certDir = await executeDockerCommand(findCertDirCmd);
+            certDir = certDir.trim();
+            
+            if (certDir && certDir !== '') {
+              console.log(`証明書ディレクトリが見つかりました: ${certDir}`);
               
-              if (certFileSearch && certFileSearch.trim() !== '') {
-                // ファイルからディレクトリ名を取得
-                certDir = await executeDockerCommand(`docker exec acme sh -c "dirname ${certFileSearch.trim()}"`);
-                console.log(`証明書ディレクトリが見つかりました: ${certDir.trim()}`);
-              } else {
-                // ディレクトリ名から検索
-                const dirSearch = await executeDockerCommand(`docker exec acme sh -c "find /root/.acme.sh -type d -name '*${customDomain}*' | head -n 1"`);
-                
-                if (dirSearch && dirSearch.trim() !== '') {
-                  certDir = dirSearch.trim();
-                  console.log(`証明書ディレクトリが見つかりました: ${certDir}`);
-                }
-              }
+              // キーファイルと証明書ファイルを検索
+              const findFilesCmd = `docker exec acme sh -c "
+DOMAIN=${customDomain}
+CERT_DIR='${certDir}'
+
+# キーファイルを探して処理
+KEY_FILE=''
+if [ -f \"$CERT_DIR/\"\"$DOMAIN\"'.key' ]; then
+  KEY_FILE=\"$CERT_DIR/\"\"$DOMAIN\"'.key'
+  echo \"標準キーファイルが見つかりました: $KEY_FILE\"
+else
+  KEY_FILE=$(find \"$CERT_DIR\" -name '*.key' 2>/dev/null | head -n 1)
+  if [ -n \"$KEY_FILE\" ]; then
+    echo \"代替キーファイルが見つかりました: $KEY_FILE\"
+  fi
+fi
+
+# 証明書ファイルを探して処理
+CERT_FILE=''
+if [ -f \"$CERT_DIR/fullchain.cer\" ]; then
+  CERT_FILE=\"$CERT_DIR/fullchain.cer\"
+  echo \"標準証明書ファイルが見つかりました: $CERT_FILE\"
+elif [ -f \"$CERT_DIR/\"\"$DOMAIN\"'.cer' ]; then
+  CERT_FILE=\"$CERT_DIR/\"\"$DOMAIN\"'.cer'
+  echo \"ドメイン名証明書ファイルが見つかりました: $CERT_FILE\"
+else
+  CERT_FILE=$(find \"$CERT_DIR\" -name '*.cer' -o -name '*.crt' 2>/dev/null | head -n 1)
+  if [ -n \"$CERT_FILE\" ]; then
+    echo \"代替証明書ファイルが見つかりました: $CERT_FILE\"
+  fi
+fi
+
+echo \"$KEY_FILE|$CERT_FILE\"
+"`;
               
-              if (certDir && certDir.trim() !== '') {
-                // 証明書ファイルの存在を確認
-                console.log(`証明書ファイルを確認中...`);
-                const certFiles = await executeDockerCommand(`docker exec acme sh -c "ls -la ${certDir.trim()}"`);
-                console.log(`証明書ディレクトリの内容:\n${certFiles}`);
+              const filesResult = await executeDockerCommand(findFilesCmd);
+              const [keyFile, certFile] = filesResult.split('|').map(file => file.trim());
+              
+              // ファイルが見つかった場合はコピー
+              if (keyFile && certFile) {
+                console.log(`キーファイル: ${keyFile}`);
+                console.log(`証明書ファイル: ${certFile}`);
                 
-                // 証明書をコピー
+                // 証明書ファイルをコピー
                 await executeDockerCommand(`docker exec acme sh -c "mkdir -p /root/.acme.sh/certs"`);
+                const copyKeyResult = await executeDockerCommand(`docker exec acme sh -c "cp ${keyFile} /root/.acme.sh/certs/${customDomain}.key && echo 'success' || echo 'failed'"`);
+                console.log(`キーファイルのコピー: ${copyKeyResult.includes('success') ? '成功' : '失敗'}`);
                 
-                // キーファイルを検索
-                let keyFile = '';
-                try {
-                  keyFile = await executeDockerCommand(`docker exec acme sh -c "find ${certDir.trim()} -name '*.key' | head -n 1"`);
-                } catch (e) {
-                  console.error(`キーファイルの検索に失敗しました: ${e}`);
-                }
-                
-                // 証明書ファイルを検索
-                let certFile = '';
-                try {
-                  certFile = await executeDockerCommand(`docker exec acme sh -c "find ${certDir.trim()} -name '*.cer' -o -name '*.crt' | head -n 1"`);
-                } catch (e) {
-                  console.error(`証明書ファイルの検索に失敗しました: ${e}`);
-                }
-                
-                // ファイルが見つかった場合はコピー
-                if (keyFile && keyFile.trim() !== '') {
-                  await executeDockerCommand(`docker exec acme sh -c "cp ${keyFile.trim()} /root/.acme.sh/certs/${customDomain}.key || echo 'キーファイルのコピーに失敗しました'"`);
-                } else {
-                  console.error(`キーファイルが見つかりません`);
-                }
-                
-                if (certFile && certFile.trim() !== '') {
-                  await executeDockerCommand(`docker exec acme sh -c "cp ${certFile.trim()} /root/.acme.sh/certs/${customDomain}.crt || echo '証明書ファイルのコピーに失敗しました'"`);
-                } else {
-                  console.error(`証明書ファイルが見つかりません`);
-                }
+                const copyCertResult = await executeDockerCommand(`docker exec acme sh -c "cp ${certFile} /root/.acme.sh/certs/${customDomain}.crt && echo 'success' || echo 'failed'"`);
+                console.log(`証明書ファイルのコピー: ${copyCertResult.includes('success') ? '成功' : '失敗'}`);
                 
                 // 権限を設定
                 await executeDockerCommand(`docker exec acme sh -c "chmod 644 /root/.acme.sh/certs/${customDomain}.key /root/.acme.sh/certs/${customDomain}.crt 2>/dev/null || true"`);
                 
                 // Nginxを再起動
                 await executeDockerCommand('docker restart nginx-proxy');
+                console.log('証明書のインストールが完了しました');
               } else {
-                console.error(`証明書ディレクトリが見つかりません: ${customDomain}`);
+                console.error('証明書ファイルが見つかりません:');
+                console.error(`キーファイル: ${keyFile || 'なし'}`);
+                console.error(`証明書ファイル: ${certFile || 'なし'}`);
               }
-            } catch (error) {
-              console.error(`既存の証明書のインストール中にエラーが発生しました: ${error}`);
+            } else {
+              console.error(`証明書ディレクトリが見つかりません: ${customDomain}`);
             }
+          } else {
+            console.log('証明書はすでに正しくインストールされています');
           }
         }
       } catch (certError: any) {
