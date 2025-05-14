@@ -481,7 +481,7 @@ export const runContainer = async (
     }
     
     // Nginxネットワークの設定
-    const networkMode = process.env.DOCKER_NETWORK || 'nextdock-network';
+    const networkMode = process.env.DOCKER_NETWORK || 'repo_nextdock-network';
     console.log(`使用ネットワーク: ${networkMode}`);
     
     // コンテナを作成
