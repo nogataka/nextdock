@@ -557,14 +557,9 @@ export const runContainer = async (
           await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/${customDomain}.key /acme.sh/certs/${customDomain}.key || echo 'キーファイルのコピーに失敗しました'"`);
           await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/fullchain.cer /acme.sh/certs/${customDomain}.crt || echo '証明書ファイルのコピーに失敗しました'"`);
           
-          // ルートディレクトリにも証明書をコピー（Nginxプロキシが直接参照できるように）
-          console.log(`証明書をルートディレクトリにコピー中...`);
-          await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/${customDomain}.key /acme.sh/${customDomain}.key || echo 'ルートディレクトリへのキーファイルのコピーに失敗しました'"`);
-          await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/fullchain.cer /acme.sh/${customDomain}.crt || echo 'ルートディレクトリへの証明書ファイルのコピーに失敗しました'"`);
-          
           // 証明書の権限を設定
           console.log(`証明書の権限を設定中...`);
-          await executeDockerCommand(`docker exec acme sh -c "chmod 644 /acme.sh/certs/${customDomain}.key /acme.sh/certs/${customDomain}.crt /acme.sh/${customDomain}.key /acme.sh/${customDomain}.crt 2>/dev/null || true"`);
+          await executeDockerCommand(`docker exec acme sh -c "chmod 644 /acme.sh/certs/${customDomain}.key /acme.sh/certs/${customDomain}.crt 2>/dev/null || true"`);
           
           // 証明書の確認
           console.log(`インストールされた証明書を確認中...`);
@@ -572,13 +567,9 @@ export const runContainer = async (
           const installedCerts = await executeDockerCommand(installedCertsCmd);
           console.log(`/acme.sh/certs/ の証明書:\n${installedCerts}`);
           
-          const rootCertsCmd = `docker exec acme sh -c "ls -la /acme.sh/${customDomain}* 2>/dev/null || echo '証明書が見つかりません'"`;
-          const rootCerts = await executeDockerCommand(rootCertsCmd);
-          console.log(`/acme.sh/ の証明書:\n${rootCerts}`);
-          
           // 証明書の内容を確認（デバッグ用）
           console.log(`証明書の内容を確認中...`);
-          const certContentCmd = `docker exec acme sh -c "openssl x509 -in /acme.sh/${customDomain}.crt -text -noout | grep 'Subject:' || echo '証明書内容の取得に失敗しました'"`;
+          const certContentCmd = `docker exec acme sh -c "openssl x509 -in /acme.sh/certs/${customDomain}.crt -text -noout | grep 'Subject:' || echo '証明書内容の取得に失敗しました'"`;
           const certContent = await executeDockerCommand(certContentCmd);
           console.log(`証明書の内容: ${certContent}`);
           
@@ -605,12 +596,8 @@ export const runContainer = async (
               await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/${customDomain}.key /acme.sh/certs/${customDomain}.key || echo 'キーファイルのコピーに失敗しました'"`);
               await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/fullchain.cer /acme.sh/certs/${customDomain}.crt || echo '証明書ファイルのコピーに失敗しました'"`);
               
-              // ルートディレクトリにも証明書をコピー
-              await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/${customDomain}.key /acme.sh/${customDomain}.key || echo 'ルートディレクトリへのキーファイルのコピーに失敗しました'"`);
-              await executeDockerCommand(`docker exec acme sh -c "cp ${certDir.trim()}/fullchain.cer /acme.sh/${customDomain}.crt || echo 'ルートディレクトリへの証明書ファイルのコピーに失敗しました'"`);
-              
               // 権限を設定
-              await executeDockerCommand(`docker exec acme sh -c "chmod 644 /acme.sh/certs/${customDomain}.key /acme.sh/certs/${customDomain}.crt /acme.sh/${customDomain}.key /acme.sh/${customDomain}.crt 2>/dev/null || true"`);
+              await executeDockerCommand(`docker exec acme sh -c "chmod 644 /acme.sh/certs/${customDomain}.key /acme.sh/certs/${customDomain}.crt 2>/dev/null || true"`);
               
               // Nginxを再起動
               await executeDockerCommand('docker restart nginx-proxy');
