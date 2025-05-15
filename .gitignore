@@ -1,6 +1,6 @@
 /node_modules
 
-deploy_back_front.js
+deploy_back_front.js.*
 
 package-lock.json
 package.json
